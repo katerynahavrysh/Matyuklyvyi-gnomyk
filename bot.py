@@ -304,8 +304,7 @@ async def cmd_newtask(update: Update, context: ContextTypes.DEFAULT_TYPE):
     announce = messages.pick(messages.NEW_TASK_FROM_BOT).format(
         name=name_repr, task=_esc(task.title), deadline=deadline.strftime("%d.%m")
     )
-    await _deliver(context, target_uid or update.effective_user.id, announce)
-
+    await _deliver(context, target_uid or update.effective_user.id, announce, thread_id=config.DAILY_DIGEST_THREAD_ID)
 
 # ------------------------------------------------------------------
 # Заплановані завдання
@@ -449,8 +448,11 @@ async def _handle_notion_event(application: Application, event_type: str, page_i
     dest = config.TEAM_CHAT_ID or uid
     if not dest:
         return
+    kwargs = {"chat_id": dest, "text": text, "parse_mode": _parse_mode()}
+    if config.TEAM_CHAT_ID and config.DAILY_DIGEST_THREAD_ID:
+        kwargs["message_thread_id"] = config.DAILY_DIGEST_THREAD_ID
     try:
-        await application.bot.send_message(chat_id=dest, text=text, parse_mode=_parse_mode())
+        await application.bot.send_message(**kwargs)
     except Exception as e:
         log.warning("Не вдалось надіслати повідомлення про подію з Notion: %s", e)
 
