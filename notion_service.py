@@ -18,6 +18,47 @@ import config
 
 notion = Client(auth=config.NOTION_TOKEN)
 
+_schema_cache: Optional[dict] = None
+
+
+def _get_schema() -> dict:
+    """Кешовано дістає властивості бази (типи колонок), щоб create_task
+    міг сам зрозуміти, що «Відповідальний» — select, а не текст, і т.п."""
+    global _schema_cache
+    if _schema_cache is None:
+        db = notion.databases.retrieve(database_id=config.NOTION_DATABASE_ID)
+        _schema_cache = db.get("properties", {})
+    return _schema_cache
+
+
+def _build_value(prop_name: str, value) -> dict:
+    """Формує правильне значення властивості під фактичний тип колонки в Notion,
+    незалежно від того, title/select/rich_text/date/people це чи multi_select."""
+    schema = _get_schema()
+    ptype = schema.get(prop_name, {}).get("type")
+
+    if ptype == "title":
+        return {"title": [{"text": {"content": str(value)}}]}
+    if ptype == "rich_text":
+        return {"rich_text": [{"text": {"content": str(value)}}]}
+    if ptype == "select":
+        return {"select": {"name": str(value)}}
+    if ptype == "multi_select":
+        return {"multi_select": [{"name": str(value)}]}
+    if ptype == "date":
+        d = value.isoformat() if hasattr(value, "isoformat") else str(value)
+        return {"date": {"start": d}}
+    if ptype == "people":
+        # People-колонку бот не вміє заповнювати (потрібні Notion user id, а не ім'я) —
+        # пропускаємо, щоб не зламати запит; лишаємо як rich_text-фолбек не можна.
+        raise ValueError(
+            f"Колонка «{prop_name}» у Notion має тип People — бот не може писати в неї "
+            f"саме ім'я текстом. Зроби цю колонку типом Select або Text, або встав "
+            f"значення туди вручну."
+        )
+    # тип не визначено (колонки нема в базі чи щось незвичне) — пробуємо як текст
+    return {"rich_text": [{"text": {"content": str(value)}}]}
+
 
 @dataclass
 class Task:
@@ -108,7 +149,7 @@ def get_tasks_for_person(notion_name: str, include_done: bool = False) -> list[T
 def update_status(page_id: str, new_status: str) -> None:
     notion.pages.update(
         page_id=page_id,
-        properties={config.PROP_STATUS: {"select": {"name": new_status}}},
+        properties={config.PROP_STATUS: _build_value(config.PROP_STATUS, new_status)},
     )
 
 
@@ -129,13 +170,13 @@ def get_page_by_id(page_id: str) -> Optional[Task]:
 
 def create_task(title: str, assignee: str, deadline: date, pillar: str = "") -> Task:
     properties = {
-        config.PROP_TASK: {"title": [{"text": {"content": title}}]},
-        config.PROP_STATUS: {"select": {"name": config.NOT_STARTED_STATUSES[0]}},
-        config.PROP_ASSIGNEE: {"rich_text": [{"text": {"content": assignee}}]},
-        config.PROP_DEADLINE: {"date": {"start": deadline.isoformat()}},
+        config.PROP_TASK: _build_value(config.PROP_TASK, title),
+        config.PROP_STATUS: _build_value(config.PROP_STATUS, config.NOT_STARTED_STATUSES[0]),
+        config.PROP_ASSIGNEE: _build_value(config.PROP_ASSIGNEE, assignee),
+        config.PROP_DEADLINE: _build_value(config.PROP_DEADLINE, deadline),
     }
     if pillar and config.PROP_PILLAR:
-        properties[config.PROP_PILLAR] = {"select": {"name": pillar}}
+        properties[config.PROP_PILLAR] = _build_value(config.PROP_PILLAR, pillar)
 
     page = notion.pages.create(
         parent={"database_id": config.NOTION_DATABASE_ID},
