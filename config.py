@@ -55,7 +55,7 @@ DAILY_DIGEST_HOUR = int(_get("DAILY_DIGEST_HOUR", "10"))
 DAILY_DIGEST_MINUTE = int(_get("DAILY_DIGEST_MINUTE", "0"))
 # Перевірка "2 дні / 1 день до дедлайну" запускається одразу після дайджесту
 DEADLINE_WATCH_MINUTE_OFFSET = int(_get("DEADLINE_WATCH_MINUTE_OFFSET", "5"))
-NAG_INTERVAL_HOURS = int(_get("NAG_INTERVAL_HOURS", "3"))
+NAG_HOURS = [int(h.strip()) for h in _get("NAG_HOURS", "12,18").split(",")]
 WORKDAY_START_HOUR = int(_get("WORKDAY_START_HOUR", "9"))
 WORKDAY_END_HOUR = int(_get("WORKDAY_END_HOUR", "21"))
 
