@@ -145,8 +145,7 @@ async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         notion_name=canonical_name,
         telegram_username=update.effective_user.username,
     )
-    await update.message.reply_text(messages.REGISTER_OK.format(name=canonical_name))
-
+    await update.message.reply_text(messages.pick(messages.REGISTER_OK).format(name=canonical_name))
 
 def _status_keyboard(page_id: str, current_status: str) -> InlineKeyboardMarkup:
     buttons = []
@@ -218,10 +217,10 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasks = notion_service.get_all_tasks()
     overdue = [t for t in tasks if t.deadline and t.days_overdue > 0]
     if not overdue:
-        await update.message.reply_text(messages.SHAME_GROUP_CLEAN)
+        await update.message.reply_text(messages.pick(messages.SHAME_GROUP_CLEAN))
         return
     overdue.sort(key=lambda t: -t.days_overdue)
-    lines = [messages.SHAME_GROUP_HEADER]
+    lines = [messages.pick(messages.SHAME_GROUP_HEADER)]
     for t in overdue[:15]:
         uid = storage.get_chat_id_by_notion_name(t.assignee) if t.assignee else None
         name_repr = _mention_or_name(uid, t.assignee or "хтозна-хто")
@@ -361,13 +360,13 @@ async def job_daily_digest(context: ContextTypes.DEFAULT_TYPE):
             key=lambda t: -t.days_overdue,
         )
         if overdue:
-            lines = [messages.SHAME_GROUP_HEADER]
+            lines = [messages.pick(messages.SHAME_GROUP_HEADER)]
             for t in overdue[:10]:
                 uid = storage.get_chat_id_by_notion_name(t.assignee) if t.assignee else None
                 name_repr = _mention_or_name(uid, t.assignee or "хтозна-хто")
                 lines.append(messages.SHAME_GROUP_LINE.format(name=name_repr, task=_esc(t.title), days=t.days_overdue))
         else:
-            lines = [messages.SHAME_GROUP_CLEAN]
+            lines = [messages.pick(messages.SHAME_GROUP_CLEAN)]
         try:
             await context.bot.send_message(chat_id=config.TEAM_CHAT_ID, text="\n".join(lines), parse_mode=_parse_mode())
         except Exception as e:
@@ -524,8 +523,9 @@ async def run():
             tzinfo=TZ,
         ),
     )
-    jq.run_repeating(job_periodic_nag, interval=config.NAG_INTERVAL_HOURS * 3600, first=60)
-
+    for hour in config.NAG_HOURS:
+        jq.run_daily(job_periodic_nag, time=dtime(hour=hour, minute=0, tzinfo=TZ))
+        
     aio_app = web.Application()
     aio_app["bot_app"] = application
     aio_app.router.add_post(config.NOTION_WEBHOOK_PATH, handle_notion_webhook)
