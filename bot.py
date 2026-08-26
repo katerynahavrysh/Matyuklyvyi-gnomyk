@@ -80,11 +80,11 @@ async def _deliver(context: ContextTypes.DEFAULT_TYPE, user_id, text: str):
 # ------------------------------------------------------------------
 
 def _week_bounds(today: date | None = None) -> tuple[date, date]:
-    """Понеділок і неділя поточного тижня (тиждень рахується пн–нд)."""
+    """Рухоме вікно на 7 днів, починаючи із сьогодні (сьогодні + 6 днів наперед).
+    Наприклад, якщо сьогодні вівторок — діапазон буде вівторок-вівторок."""
     today = today or date.today()
-    monday = today - timedelta(days=today.weekday())
-    sunday = monday + timedelta(days=6)
-    return monday, sunday
+    end = today + timedelta(days=6)
+    return today, end
 
 
 def _format_task_line(t: "notion_service.Task") -> str:
@@ -310,10 +310,10 @@ async def cmd_newtask(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ------------------------------------------------------------------
 
 async def job_daily_digest(context: ContextTypes.DEFAULT_TYPE):
-    """О 10:00: список тасок людини на ПОТОЧНИЙ тиждень (пн–нд),
+ """О 10:00: список тасок людини на найближчі 7 днів (рухоме вікно від сьогодні),
     плюс окремо — що вже прострочено з минулого і досі не закрито."""
     log.info("Running daily digest")
-    monday, sunday = _week_bounds()
+    period_start, period_end = _week_bounds()
     users = storage.all_users()
     for uid_str, info in users.items():
         uid = int(uid_str)
@@ -321,8 +321,8 @@ async def job_daily_digest(context: ContextTypes.DEFAULT_TYPE):
         if not tasks:
             continue
 
-        this_week = [t for t in tasks if t.deadline and monday <= t.deadline <= sunday]
-        stale_overdue = [t for t in tasks if t.deadline and t.deadline < monday and t.days_overdue > 0]
+        this_week = [t for t in tasks if t.deadline and period_start <= t.deadline <= period_end]
+        stale_overdue = [t for t in tasks if t.deadline and t.deadline < period_start and t.days_overdue > 0]
         no_deadline = [t for t in tasks if not t.deadline]
 
         if not this_week and not stale_overdue and not no_deadline:
@@ -333,11 +333,11 @@ async def job_daily_digest(context: ContextTypes.DEFAULT_TYPE):
 
         header = messages.pick(messages.DIGEST_HEADER)
         lines = [f"{name_repr}, {header.lower()}" if config.TEAM_CHAT_ID else header, ""]
-        lines.append(f"📅 Твій тиждень ({monday.strftime('%d.%m')}–{sunday.strftime('%d.%m')}):")
+        lines.append(f"📅 Наступні 7 днів ({period_start.strftime('%d.%m')}–{period_end.strftime('%d.%m')}):")
         if this_week:
             lines += [f"• {_format_task_line(t)}" for t in this_week]
         else:
-            lines.append("— на цей тиждень дедлайнів немає (насолоджуйся, поки можеш)")
+            lines.append("— на найближчі 7 днів дедлайнів немає (насолоджуйся, поки можеш)")
 
         if stale_overdue:
             stale_overdue.sort(key=lambda t: -t.days_overdue)
