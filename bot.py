@@ -62,15 +62,20 @@ def _mention_or_name(user_id, name: str) -> str:
     return name
 
 
-async def _deliver(context: ContextTypes.DEFAULT_TYPE, user_id, text: str):
+async def _deliver(context: ContextTypes.DEFAULT_TYPE, user_id, text: str, thread_id: int | None = None):
     """Надіслати повідомлення в груповий чат команди (тегаючи людину), або,
-    якщо груповий чат не налаштований, особисто людині в приваті."""
+    якщо груповий чат не налаштований, особисто людині в приваті.
+    thread_id — опційно, id теми форуму (наприклад "Матюкливий гномік"
+    для щоденного дайджесту); якщо не передати — йде в General."""
     target = config.TEAM_CHAT_ID or user_id
     if not target:
         log.warning("Нема куди надсилати: ні TEAM_CHAT_ID, ні user_id")
         return
+    kwargs = {"chat_id": target, "text": text, "parse_mode": _parse_mode()}
+    if thread_id and config.TEAM_CHAT_ID:
+        kwargs["message_thread_id"] = thread_id
     try:
-        await context.bot.send_message(chat_id=target, text=text, parse_mode=_parse_mode())
+        await context.bot.send_message(**kwargs)
     except Exception as e:
         log.warning("Не вдалось надіслати повідомлення в %s: %s", target, e)
 
@@ -146,6 +151,7 @@ async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         telegram_username=update.effective_user.username,
     )
     await update.message.reply_text(messages.pick(messages.REGISTER_OK).format(name=canonical_name))
+
 
 def _status_keyboard(page_id: str, current_status: str) -> InlineKeyboardMarkup:
     buttons = []
@@ -305,12 +311,13 @@ async def cmd_newtask(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await _deliver(context, target_uid or update.effective_user.id, announce, thread_id=config.DAILY_DIGEST_THREAD_ID)
 
+
 # ------------------------------------------------------------------
 # Заплановані завдання
 # ------------------------------------------------------------------
 
 async def job_daily_digest(context: ContextTypes.DEFAULT_TYPE):
- """О 10:00: список тасок людини на найближчі 7 днів (рухоме вікно від сьогодні),
+    """О 10:00: список тасок людини на найближчі 7 днів (рухоме вікно від сьогодні),
     плюс окремо — що вже прострочено з минулого і досі не закрито."""
     log.info("Running daily digest")
     period_start, period_end = _week_bounds()
@@ -351,7 +358,7 @@ async def job_daily_digest(context: ContextTypes.DEFAULT_TYPE):
             lines += [f"• «{_esc(t.title)}» — {_esc(t.status)}" for t in no_deadline]
 
         lines += ["", messages.pick(messages.DIGEST_FOOTER)]
-        await _deliver(context, uid, "\n".join(lines))
+        await _deliver(context, uid, "\n".join(lines), thread_id=config.DAILY_DIGEST_THREAD_ID)
 
     if config.TEAM_CHAT_ID:
         all_tasks = notion_service.get_all_tasks()
@@ -367,8 +374,11 @@ async def job_daily_digest(context: ContextTypes.DEFAULT_TYPE):
                 lines.append(messages.SHAME_GROUP_LINE.format(name=name_repr, task=_esc(t.title), days=t.days_overdue))
         else:
             lines = [messages.pick(messages.SHAME_GROUP_CLEAN)]
+        kwargs = {"chat_id": config.TEAM_CHAT_ID, "text": "\n".join(lines), "parse_mode": _parse_mode()}
+        if config.DAILY_DIGEST_THREAD_ID:
+            kwargs["message_thread_id"] = config.DAILY_DIGEST_THREAD_ID
         try:
-            await context.bot.send_message(chat_id=config.TEAM_CHAT_ID, text="\n".join(lines), parse_mode=_parse_mode())
+            await context.bot.send_message(**kwargs)
         except Exception as e:
             log.warning("Не вдалось надіслати груповий звіт: %s", e)
 
@@ -525,7 +535,7 @@ async def run():
     )
     for hour in config.NAG_HOURS:
         jq.run_daily(job_periodic_nag, time=dtime(hour=hour, minute=0, tzinfo=TZ))
-        
+
     aio_app = web.Application()
     aio_app["bot_app"] = application
     aio_app.router.add_post(config.NOTION_WEBHOOK_PATH, handle_notion_webhook)
